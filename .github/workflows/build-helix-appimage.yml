@@ -79,7 +79,7 @@ jobs:
           
           echo "Copying binary and runtime files..."
           # Copy the compiled binary from the zigbuild target directory
-          cp "target/x86_64-unknown-linux-gnu.2.17/opt/hx" "$APP.AppDir/usr/bin/hx"
+          cp "target/x86_64-unknown-linux-gnu/opt/hx" "$APP.AppDir/usr/bin/hx"
           # Remove the source files for grammars to keep the package clean
           rm -rf runtime/grammars/sources
           cp -r runtime "$APP.AppDir/usr/lib/helix/runtime"
