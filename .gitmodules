@@ -1,0 +1,3 @@
+[submodule "neovim-releases"]
+	path = neovim-releases
+	url = https://github.com/neovim/neovim-releases
