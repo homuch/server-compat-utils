@@ -1,0 +1,123 @@
+name: Build CentOS 7 Compatible Helix AppImage
+
+# This action is triggered manually from the GitHub UI
+on:
+  workflow_dispatch:
+
+jobs:
+  build-and-release:
+    name: Build and Release Helix AppImage
+    runs-on: ubuntu-latest
+
+    # The workflow needs write permissions to create a release and push a tag
+    permissions:
+      contents: write
+
+    steps:
+      - name: 1. Get latest Helix release tag
+        id: get_tag
+        run: |
+          # Fetch the latest release information from the Helix GitHub repository API
+          LATEST_TAG=$(curl -s "https://api.github.com/repos/helix-editor/helix/releases/latest" | jq -r .tag_name)
+          echo "Latest Helix release is: $LATEST_TAG"
+          # Set the tag as an output for other steps to use
+          echo "tag=${LATEST_TAG}" >> "$GITHUB_OUTPUT"
+
+      - name: 2. Checkout Helix source code at latest release
+        uses: actions/checkout@v4
+        with:
+          # Specify the official Helix repository
+          repository: helix-editor/helix
+          # Use the tag we fetched in the previous step
+          ref: ${{ steps.get_tag.outputs.tag }}
+
+      - name: 3. Set up build environment
+        run: |
+          # Install dependencies required for AppImage creation
+          sudo apt-get update
+          sudo apt-get install -y libfuse2 jq
+
+      - name: 4. Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: 5. Install Zig and cargo-zigbuild
+        run: |
+          # Download and install a specific version of Zig
+          curl -L "https://ziglang.org/download/0.11.0/zig-linux-x86_64-0.11.0.tar.xz" | tar -xJ
+          echo "$(pwd)/zig-linux-x86_64-0.11.0" >> $GITHUB_PATH
+          # Install the cargo-zigbuild helper crate
+          cargo install cargo-zigbuild
+
+      - name: 6. Fetch tree-sitter grammars
+        run: |
+          # This is a required build step for Helix to bundle language grammars
+          cargo run --package=helix-loader --bin=hx-loader
+
+      - name: 7. Build release binary for CentOS 7 compatibility
+        run: |
+          echo "Building with cargo zigbuild for glibc 2.17 compatibility..."
+          # The target 'x86_64-unknown-linux-gnu.2.17' ensures the binary is linked against
+          # an older version of glibc, making it compatible with older systems like CentOS 7.
+          cargo zigbuild --target x86_64-unknown-linux-gnu.2.17 --profile opt
+
+      - name: 8. Package AppImage
+        shell: bash
+        run: |
+          # Set environment variables for the AppImage build process
+          export VERSION="${{ steps.get_tag.outputs.tag }}"
+          export ARCH="x86_64"
+          export APP="helix"
+          
+          # The output file will be named like 'helix-23.10-x86_64.AppImage'
+          export OUTPUT="$APP-$VERSION-$ARCH.AppImage"
+
+          # This metadata helps with auto-updating the AppImage
+          export UPDATE_INFORMATION="gh-releases-zsync|${{ github.repository_owner }}|${{ github.event.repository.name }}|latest|$APP-*-$ARCH.AppImage.zsync"
+          
+          echo "Creating AppDir structure..."
+          mkdir -p "$APP.AppDir"/usr/{bin,lib/helix}
+          
+          echo "Copying binary and runtime files..."
+          # Copy the compiled binary from the zigbuild target directory
+          cp "target/x86_64-unknown-linux-gnu.2.17/opt/hx" "$APP.AppDir/usr/bin/hx"
+          # Remove the source files for grammars to keep the package clean
+          rm -rf runtime/grammars/sources
+          cp -r runtime "$APP.AppDir/usr/lib/helix/runtime"
+          
+          echo "Creating AppRun script..."
+          # This script ensures Helix can find its runtime files when launched from the AppImage
+          cat << 'EOF' > "$APP.AppDir/AppRun"
+          #!/bin/sh
+          APPDIR="$(dirname "$(readlink -f "${0}")")"
+          HELIX_RUNTIME="$APPDIR/usr/lib/helix/runtime" exec "$APPDIR/usr/bin/hx" "$@"
+          EOF
+          chmod 755 "$APP.AppDir/AppRun"
+          
+          echo "Downloading linuxdeploy..."
+          # linuxdeploy is the tool that bundles all dependencies into the AppImage
+          curl -Lo linuxdeploy-x86_64.AppImage \
+              https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage
+          chmod +x linuxdeploy-x86_64.AppImage
+          
+          echo "Running linuxdeploy to generate the AppImage..."
+          ./linuxdeploy-x86_64.AppImage \
+              --appdir "$APP.AppDir" -d contrib/Helix.desktop \
+              -i contrib/helix.png --output appimage
+          
+          echo "AppImage and zsync file created."
+          # The .zsync file is generated automatically by linuxdeploy for differential updates
+
+      - name: 9. Create GitHub Release
+        uses: svenstaro/upload-release-action@v2
+        with:
+          # Use the GITHUB_TOKEN provided by GitHub Actions
+          repo_token: ${{ secrets.GITHUB_TOKEN }}
+          # The glob pattern for the files to upload
+          file: helix-*.AppImage*
+          file_glob: true
+          # Create a new tag in your repo for this release
+          tag: "helix-${{ steps.get_tag.outputs.tag }}-centos7"
+          release_name: "Helix ${{ steps.get_tag.outputs.tag }} (CentOS 7 AppImage)"
+          body: "This is a CentOS 7 compatible AppImage build for Helix version ${{ steps.get_tag.outputs.tag }}."
+          # Overwrite assets if a release with the same tag already exists
+          overwrite: true
