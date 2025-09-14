@@ -10,5 +10,15 @@ Built by dedicated action (`.github/workflows/build-helix-appimage.yml`). Pre-bu
 
 Just download from the official [build](https://github.com/neovim/neovim-releases/releases) for unsupported machine.
 
+## btop++
 
+Find the latest release at the [btop official release](https://github.com/aristocratos/btop/releases). `btop-bins` provides binaries for x86_64 (copy from the release).
+
+## eza
+
+(TODO)
+
+## starship
+
+(TODO)
 
